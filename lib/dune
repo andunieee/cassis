@@ -1,3 +1,3 @@
 (library
  (name cassis)
- (libraries ctypes ctypes-foreign))
+ (libraries ctypes ctypes-foreign sha))

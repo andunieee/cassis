@@ -22,9 +22,14 @@ let lastkey =
   with Not_found -> 0L
 
 let serial = ref lastkey
+let sec = "2d42a2771dc2f6a16523c7a4ce7ac5e3e2288a1a68068fc5935a3bfb7206061b"
+let keypair = `Hex sec |> Hex.to_bytes |> Cassis.Bip340.load_secret
 
 let () =
-  Dream.log "%s" (Cassis.Bip340.sign |> Hex.of_bytes |> Hex.show);
+  Dream.log "pubkey: %s"
+    (Cassis.Bip340.public_key keypair |> Hex.of_bytes |> Hex.show);
+  Dream.log "sig: %s"
+    (Cassis.Bip340.sign keypair "hello" |> Hex.of_bytes |> Hex.show);
   Dream.run ~interface:"0.0.0.0" ~port:3002
   @@ Dream.router
        [
