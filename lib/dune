@@ -1,2 +1,3 @@
 (library
- (name cassis))
+ (name cassis)
+ (libraries ctypes ctypes-foreign))
