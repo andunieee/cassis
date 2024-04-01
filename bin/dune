@@ -2,4 +2,4 @@
  (names registry router)
  (flags :standard -cclib -lsecp256k1)
  (libraries cassis dream core core_unix lmdb hex)
- (preprocess (pps lwt_ppx ppx_yojson_conv)))
+ (preprocess (pps lwt_ppx)))

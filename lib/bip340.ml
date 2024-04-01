@@ -74,7 +74,7 @@ let public_key keypair =
   let _ = secp256k1_xonly_pubkey_serialize ctx output32 xonly in
   Bytes.init 32 (fun i -> !@(output32 +@ i))
 
-let sign keypair msg =
+let sign ~keypair msg =
   let msg32 = allocate_n char ~count:32 in
   Sha256.string msg |> Sha256.to_bin
   |> String.iteri (fun i char -> msg32 +@ i <-@ char);
@@ -83,7 +83,7 @@ let sign keypair msg =
   let _ = secp256k1_schnorrsig_sign32 ctx sig64 msg32 keypair aux_rand in
   Bytes.init 64 (fun i -> !@(sig64 +@ i))
 
-let verify pubkey msg sig_bytes =
+let verify ~pubkey msg sig_bytes =
   let msg32 = allocate_n char ~count:32 in
   Sha256.string msg |> Sha256.to_bin
   |> String.iteri (fun i char -> msg32 +@ i <-@ char);
