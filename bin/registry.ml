@@ -28,8 +28,10 @@ let keypair = `Hex sec |> Hex.to_bytes |> Cassis.Bip340.load_secret
 let () =
   Dream.log "pubkey: %s"
     (Cassis.Bip340.public_key keypair |> Hex.of_bytes |> Hex.show);
-  Dream.log "sig: %s"
-    (Cassis.Bip340.sign keypair "hello" |> Hex.of_bytes |> Hex.show);
+  let sig_ = Cassis.Bip340.sign keypair "hello" in
+  Dream.log "sig: %s" (sig_ |> Hex.of_bytes |> Hex.show);
+  Dream.log "valid: %b"
+    (Cassis.Bip340.verify (keypair |> Cassis.Bip340.public_key) "hello" sig_);
   Dream.run ~interface:"0.0.0.0" ~port:3002
   @@ Dream.router
        [

@@ -27,6 +27,11 @@ let secp256k1_schnorrsig_sign32 =
     (secp256k1_context @-> ptr char @-> ptr char @-> ptr secp256k1_keypair
    @-> ptr char @-> returning int)
 
+let secp256k1_schnorrsig_verify =
+  foreign "secp256k1_schnorrsig_verify"
+    (secp256k1_context @-> ptr char @-> ptr char @-> size_t
+   @-> ptr secp256k1_xonly_pubkey @-> returning int)
+
 let secp256k1_keypair_create =
   foreign "secp256k1_keypair_create"
     (secp256k1_context @-> ptr secp256k1_keypair @-> ptr char @-> returning int)
@@ -77,3 +82,21 @@ let sign keypair msg =
   let aux_rand = allocate_n char ~count:32 in
   let _ = secp256k1_schnorrsig_sign32 ctx sig64 msg32 keypair aux_rand in
   Bytes.init 64 (fun i -> !@(sig64 +@ i))
+
+let verify pubkey msg sig_bytes =
+  let msg32 = allocate_n char ~count:32 in
+  Sha256.string msg |> Sha256.to_bin
+  |> String.iteri (fun i char -> msg32 +@ i <-@ char);
+  let sig64 = allocate_n char ~count:64 in
+  sig_bytes |> Bytes.iteri (fun i char -> sig64 +@ i <-@ char);
+  let xonly_pubkey_alloc = allocate_n secp256k1_xonly_pubkey ~count:1 in
+  let xonly_pubkey = xonly_pubkey_alloc +@ 0 in
+  let pubkey32 = allocate_n char ~count:32 in
+  pubkey |> Bytes.iteri (fun i char -> pubkey32 +@ i <-@ char);
+  let _ = secp256k1_xonly_pubkey_parse ctx xonly_pubkey pubkey32 in
+  let ok =
+    secp256k1_schnorrsig_verify ctx sig64 msg32
+      (Unsigned.Size_t.of_int 32)
+      xonly_pubkey
+  in
+  ok == 1
