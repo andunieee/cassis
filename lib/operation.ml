@@ -1,5 +1,7 @@
 open Stdint
 
+exception Invalid_operation_json
+
 module Trust = struct
   type t = {
     source : bytes;
@@ -43,16 +45,14 @@ module Trust = struct
   let of_json json =
     let open Yojson.Basic.Util in
     {
-      source =
-        json |> member "source" |> to_string |> Hex.of_string |> Hex.to_bytes;
-      target =
-        json |> member "target" |> to_string |> Hex.of_string |> Hex.to_bytes;
+      source = json |> member "source" |> to_string |> Util.bytes_of_hex;
+      target = json |> member "target" |> to_string |> Util.bytes_of_hex;
       amount = json |> member "amount" |> to_int |> Uint32.of_int;
-      signature =
-        json |> member "signature" |> to_string |> Hex.of_string |> Hex.to_bytes;
+      signature = json |> member "signature" |> to_string |> Util.bytes_of_hex;
     }
 
   let to_json v =
+    Printf.printf "size of source: %d\n" (Bytes.length v.source);
     `Assoc
       [
         ("tag", `String (tag |> Char.escaped));
@@ -90,8 +90,7 @@ module Hop = struct
     let open Yojson.Basic.Util in
     {
       amount = json |> member "amount" |> to_int |> Uint32.of_int;
-      target =
-        json |> member "target" |> to_string |> Hex.of_string |> Hex.to_bytes;
+      target = json |> member "target" |> to_string |> Util.bytes_of_hex;
     }
 
   let to_json v =
@@ -139,10 +138,8 @@ module Send = struct
   let of_json json =
     let open Yojson.Basic.Util in
     {
-      source =
-        json |> member "source" |> to_string |> Hex.of_string |> Hex.to_bytes;
-      signature =
-        json |> member "signature" |> to_string |> Hex.of_string |> Hex.to_bytes;
+      source = json |> member "source" |> to_string |> Util.bytes_of_hex;
+      signature = json |> member "signature" |> to_string |> Util.bytes_of_hex;
       hops =
         json |> member "hops" |> to_list |> List.map Hop.of_json
         |> Array.of_list;
@@ -175,16 +172,27 @@ let deserialise baf =
 
 let conv = Lmdb.Conv.make ~serialise ~deserialise ()
 
-let of_json str =
-  let json = Yojson.Basic.from_string str in
+let of_json json =
   let open Yojson.Basic.Util in
-  match json |> member "tag" |> to_string with
-  | "t" -> Trust (Trust.of_json json)
-  | "s" -> Send (Send.of_json json)
-  | _ -> raise (Yojson.Json_error "unexpected 'tag'")
+  try
+    match json |> member "tag" |> to_string with
+    | "t" -> Trust (Trust.of_json json)
+    | "s" -> Send (Send.of_json json)
+    | _ -> raise Invalid_operation_json
+  with
+  | Yojson.Json_error _ -> raise Invalid_operation_json
+  | Yojson.End_of_array -> raise Invalid_operation_json
+  | Yojson.End_of_input -> raise Invalid_operation_json
+  | Yojson.End_of_tuple -> raise Invalid_operation_json
+  | Yojson.End_of_object -> raise Invalid_operation_json
+  | Yojson.Basic.Util.Type_error _ -> raise Invalid_operation_json
+
+let of_json_string str = Yojson.Basic.from_string str |> of_json
 
 let to_json op =
   match op with
   | Trust t -> Trust.to_json t
   | Send t -> Send.to_json t
   | Unknown -> `Null
+
+let to_json_string op = to_json op |> Yojson.to_string

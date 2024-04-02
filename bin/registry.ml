@@ -36,8 +36,8 @@ let () =
          Dream.get "/op/:id" (fun req ->
              let id = Dream.param req "id" |> Int64.of_string in
              let data = Lmdb.Map.get log id in
-             let data_json = Operation.to_json data in
-             Dream.respond (data_json |> Yojson.Basic.to_string));
+             let data_json = Operation.to_json_string data in
+             Dream.respond data_json);
          Dream.get "/log" (fun _ ->
              let _ =
                Lmdb.Cursor.go Ro log (fun cursor ->
