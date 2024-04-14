@@ -196,3 +196,21 @@ let to_json op =
   | Unknown -> `Null
 
 let to_json_string op = to_json op |> Yojson.to_string
+
+let validate op =
+  let buf = serialise Bigstringaf.create op in
+  let buflen = Bigstringaf.length buf in
+  if buflen < 64 then false
+  else
+    let sig_split_i = buflen - 64 in
+    let without_sig = Bytes.create sig_split_i in
+    let just_sig = Bytes.create 64 in
+    Bigstringaf.unsafe_blit_to_bytes buf ~src_off:0 without_sig ~dst_off:0
+      ~len:sig_split_i;
+    Bigstringaf.unsafe_blit_to_bytes buf ~src_off:sig_split_i just_sig
+      ~dst_off:0 ~len:64;
+    let without_sig_str = Bytes.unsafe_to_string without_sig in
+    match op with
+    | Trust t -> Bip340.verify ~pubkey:t.source without_sig_str just_sig
+    | Send t -> Bip340.verify ~pubkey:t.source without_sig_str just_sig
+    | Unknown -> false
