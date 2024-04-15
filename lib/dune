@@ -1,4 +1,4 @@
 (library
  (name cassis)
- (libraries ctypes ctypes-foreign yojson sha core core_unix lmdb hex stdint)
+ (libraries bip340 yojson sha core core_unix lmdb hex stdint)
  (preprocess (pps lwt_ppx)))

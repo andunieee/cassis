@@ -1,5 +1,4 @@
 (executables
  (names registry router)
- (flags :standard -cclib -lsecp256k1)
- (libraries cassis dream core core_unix lmdb hex)
+ (libraries cassis dream core core_unix lmdb hex bip340)
  (preprocess (pps lwt_ppx)))

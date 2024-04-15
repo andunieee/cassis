@@ -22,19 +22,20 @@ let lastlogkey =
 ;;
 
 let serial = ref lastlogkey
-let sec = Sys.getenv "SECRET_KEY"
 
-let _ =
-  (match sec with
+let sec =
+  (match Sys.getenv "SECRET_KEY" with
    | Some sec -> `Hex sec
    | None -> `Hex "0000000000000000000000000000000000000000000000000000000000000001")
   |> Hex.to_bytes
   |> Bip340.load_secret
 ;;
 
-let state = ref State.init
+let pub = Bip340.public_key sec
+let state = State.init ()
 
 let () =
+  Printf.printf "registry pubkey: %s\n%!" (Hex.of_bytes pub |> Hex.show);
   Dream.run ~interface:"0.0.0.0" ~port:3002
   @@ Dream.router
        [ Dream.get "/" (fun _ -> Dream.respond {|cassis registry|})
