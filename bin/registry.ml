@@ -44,13 +44,16 @@ let () =
            if not (Operation.validate op)
            then Dream.respond ~code:400 "{\"status\":\"failed\"}"
            else (
-             let newstate, applied = State.validate_and_apply !state op in
+             State.lock ();
+             let applied = State.inplace_validate_and_apply state op in
              if not applied
-             then Dream.respond ~code:400 "{\"status\":\"failed\"}"
+             then (
+               State.unlock ();
+               Dream.respond ~code:400 "{\"status\":\"failed\"}")
              else (
                Lmdb.Map.set logdb !serial op;
                serial := Int64.( + ) !serial 1L;
-               state := newstate;
+               State.unlock ();
                Dream.respond "{\"status\":\"ok\"}")))
        ; Dream.get "/op/:id" (fun req ->
            let id = Dream.param req "id" |> Int64.of_string in
