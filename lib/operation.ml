@@ -17,14 +17,7 @@ module Trust = struct
     Bigstringaf.unsafe_set baf 0 tag;
     Bigstringaf.unsafe_blit_from_bytes v.source ~src_off:0 baf ~dst_off:1 ~len:32;
     Bigstringaf.unsafe_blit_from_bytes v.target ~src_off:0 baf ~dst_off:33 ~len:32;
-    Bigstringaf.unsafe_blit_from_bytes
-      (let b = Bytes.create 4 in
-       Uint32.to_bytes_big_endian v.amount b 0;
-       b)
-      ~src_off:0
-      baf
-      ~dst_off:65
-      ~len:4;
+    Bigstringaf.unsafe_set_int32_le baf 65 (Int32.of_uint32 v.amount);
     Bigstringaf.unsafe_blit_from_bytes v.signature ~src_off:0 baf ~dst_off:69 ~len:64;
     baf
   ;;
@@ -32,12 +25,10 @@ module Trust = struct
   let deserialize baf =
     let source = Bytes.create 32
     and target = Bytes.create 32
-    and signature = Bytes.create 64
-    and amount_bytes = Bytes.create 4 in
+    and signature = Bytes.create 64 in
     Bigstringaf.unsafe_blit_to_bytes baf ~src_off:1 source ~dst_off:0 ~len:32;
     Bigstringaf.unsafe_blit_to_bytes baf ~src_off:33 target ~dst_off:0 ~len:32;
-    Bigstringaf.unsafe_blit_to_bytes baf ~src_off:65 amount_bytes ~dst_off:0 ~len:4;
-    let amount = Uint32.of_bytes_big_endian amount_bytes 0 in
+    let amount = Bigstringaf.unsafe_get_int32_le baf 65 |> Uint32.of_int32 in
     Bigstringaf.unsafe_blit_to_bytes baf ~src_off:69 signature ~dst_off:0 ~len:64;
     { source; target; amount; signature }
   ;;
@@ -72,14 +63,7 @@ module Hop = struct
   let size = 4 + 32
 
   let serialize baf ~offset v =
-    Bigstringaf.unsafe_blit_from_bytes
-      (let b = Bytes.create 4 in
-       Uint32.to_bytes_big_endian v.amount b 0;
-       b)
-      ~src_off:0
-      baf
-      ~dst_off:(offset + 0)
-      ~len:4;
+    Bigstringaf.unsafe_set_int32_le baf (offset + 0) (Int32.of_uint32 v.amount);
     Bigstringaf.unsafe_blit_from_bytes
       v.target
       ~src_off:0
@@ -89,16 +73,9 @@ module Hop = struct
   ;;
 
   let deserialize baf ~offset =
-    let target = Bytes.create 32
-    and amount_bytes = Bytes.create 4 in
-    Bigstringaf.unsafe_blit_to_bytes baf ~src_off:offset target ~dst_off:0 ~len:4;
-    Bigstringaf.unsafe_blit_to_bytes
-      baf
-      ~src_off:(offset + 4)
-      amount_bytes
-      ~dst_off:0
-      ~len:32;
-    let amount = Uint32.of_bytes_big_endian amount_bytes 0 in
+    let target = Bytes.create 32 in
+    Bigstringaf.unsafe_blit_to_bytes baf ~src_off:offset target ~dst_off:0 ~len:32;
+    let amount = Bigstringaf.unsafe_get_int32_le baf offset |> Uint32.of_int32 in
     { target; amount }
   ;;
 
@@ -228,21 +205,21 @@ let to_json op =
 let to_json_string op = to_json op |> Yojson.to_string
 
 let validate op =
-  let buf = serialise Bigstringaf.create op in
-  let buflen = Bigstringaf.length buf in
-  if buflen < 64
+  let baf = serialise Bigstringaf.create op in
+  let baflen = Bigstringaf.length baf in
+  if baflen < 64
   then false
   else (
-    let sig_split_i = buflen - 64 in
+    let sig_split_i = baflen - 64 in
     let without_sig = Bytes.create sig_split_i in
     let just_sig = Bytes.create 64 in
     Bigstringaf.unsafe_blit_to_bytes
-      buf
+      baf
       ~src_off:0
       without_sig
       ~dst_off:0
       ~len:sig_split_i;
-    Bigstringaf.unsafe_blit_to_bytes buf ~src_off:sig_split_i just_sig ~dst_off:0 ~len:64;
+    Bigstringaf.unsafe_blit_to_bytes baf ~src_off:sig_split_i just_sig ~dst_off:0 ~len:64;
     let without_sig_str = Bytes.unsafe_to_string without_sig in
     match op with
     | Trust t -> Bip340.verify ~pubkey:t.source without_sig_str just_sig
