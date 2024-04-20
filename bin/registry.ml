@@ -43,12 +43,13 @@ let () =
            let%lwt body = Dream.body req in
            let op = Operation.of_json_string body in
            State.lock ();
-           let applied = State.validate_and_apply_inplace state op in
-           if not applied
+           let valid, apply_steps = State.prepare !state op in
+           if not valid
            then (
              State.unlock ();
              Dream.respond ~code:400 "{\"status\":\"failed\"}")
            else (
+             List.iter apply_steps ~f:(fun apply -> apply state);
              Lmdb.Map.set logdb !serial op;
              serial := Int64.( + ) !serial 1L;
              State.unlock ();

@@ -198,7 +198,7 @@ type t =
 let serialise alloc op =
   match op with
   | Trust t -> Trust.serialise alloc t
-  | Transfer t -> Transfer.serialise alloc t
+  | Transfer x -> Transfer.serialise alloc x
   | Unknown -> alloc 1
 ;;
 
@@ -233,7 +233,7 @@ let of_json_string str = Yojson.Basic.from_string str |> of_json
 let to_json op =
   match op with
   | Trust t -> Trust.to_json t
-  | Transfer t -> Transfer.to_json t
+  | Transfer x -> Transfer.to_json x
   | Unknown -> `Null
 ;;
 
