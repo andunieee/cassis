@@ -32,7 +32,7 @@ let sec =
 ;;
 
 let pub = Bip340.public_key sec
-let state = State.init ()
+let state = ref (State.init ())
 
 let () =
   Printf.printf "registry pubkey: %s\n%!" (Hex.of_bytes pub |> Hex.show);

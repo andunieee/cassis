@@ -43,7 +43,7 @@ module Line = struct
 end
 
 type t =
-  { pubkeys : bytes Core.Array.t
+  { pubkeys : bytes Array.t
   ; lines : (int64, Line.t) Core.Hashtbl.t
   }
 
@@ -52,28 +52,39 @@ let lock _ = Error_checking_mutex.lock _mutex
 let unlock _ = Error_checking_mutex.unlock _mutex
 
 let init _ : t =
-  { pubkeys = Core.Array.create ~len:0 (Bytes.create 0)
+  { pubkeys = Array.create ~len:0 (Bytes.create 0)
   ; lines = Hashtbl.create (module Int64)
   }
 ;;
 
-let validate_and_apply_inplace state op =
+let validate_and_apply_inplace state_ref op =
   let open Operation in
+  let state = !state_ref in
   match op with
   | Unknown -> false
   | Trust t ->
-    let sourceKey = Core.Array.get state.pubkeys (t.source |> Uint32.to_int) in
+    let source = Uint32.to_int t.source in
+    let sourceKey = Array.get state.pubkeys source in
     let target =
-      match Core.Array.findi ~f:(fun _ v -> Bytes.equal v t.target) state.pubkeys with
+      match Array.findi ~f:(fun _ v -> Bytes.equal v t.target) state.pubkeys with
       | Some (i, _) -> i
-      | None -> 0
+      | None ->
+        let next = Array.length state.pubkeys in
+        state_ref
+        := { state with
+             pubkeys = Array.append state.pubkeys ([ t.target ] |> Array.of_list)
+           };
+        next
     in
+    let left, right = if source < target then source, target else target, source in
+    (* key to fetch the stored line *)
     let key =
-      let kleft = Uint32.to_int64 t.source in
+      let kleft = Int.to_int64 left in
       let ksleft = Int64.(kleft lsl 32) in
-      let kright = Int.to_int64 target in
+      let kright = Int.to_int64 right in
       Int64.(ksleft lor kright)
     in
+    (* signature validation *)
     let ser = Trust.serialise Bigstringaf.create t in
     let without_sig = Bytes.create 38 in
     let just_sig = Bytes.create 64 in
@@ -85,11 +96,19 @@ let validate_and_apply_inplace state op =
     then
       Hashtbl.update state.lines key ~f:(fun currp : Line.t ->
         match currp with
-        | Some curr -> curr
         | None ->
-          { peers = t.source, target |> Uint32.of_int
-          ; trust = Uint32.zero, t.amount
+          (* new line created *)
+          { peers = Uint32.of_int left, Uint32.of_int right
           ; balance = false, Uint32.zero
+          ; trust =
+              (if source < target then Uint32.zero, t.amount else t.amount, Uint32.zero)
+          }
+        | Some curr ->
+          { curr with
+            trust =
+              (if source < target
+               then fst curr.trust, t.amount
+               else t.amount, snd curr.trust)
           });
     true
   | _ -> false
