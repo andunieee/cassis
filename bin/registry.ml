@@ -42,20 +42,17 @@ let () =
        ; Dream.post "/append" (fun req ->
            let%lwt body = Dream.body req in
            let op = Operation.of_json_string body in
-           if not (Operation.validate op)
-           then Dream.respond ~code:400 "{\"status\":\"failed\"}"
+           State.lock ();
+           let applied = State.validate_and_apply_inplace state op in
+           if not applied
+           then (
+             State.unlock ();
+             Dream.respond ~code:400 "{\"status\":\"failed\"}")
            else (
-             State.lock ();
-             let applied = State.inplace_validate_and_apply state op in
-             if not applied
-             then (
-               State.unlock ();
-               Dream.respond ~code:400 "{\"status\":\"failed\"}")
-             else (
-               Lmdb.Map.set logdb !serial op;
-               serial := Int64.( + ) !serial 1L;
-               State.unlock ();
-               Dream.respond "{\"status\":\"ok\"}")))
+             Lmdb.Map.set logdb !serial op;
+             serial := Int64.( + ) !serial 1L;
+             State.unlock ();
+             Dream.respond "{\"status\":\"ok\"}"))
        ; Dream.get "/op/:id" (fun req ->
            let id = Dream.param req "id" |> Int64.of_string in
            let data = Lmdb.Map.get logdb id in
