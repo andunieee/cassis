@@ -98,16 +98,15 @@ let () =
            let data_json = Operation.to_json_string data in
            Dream.respond data_json)
        ; Dream.get "/log" (fun _ ->
-           let _ =
+           let ops =
              Lmdb.Cursor.go Ro logdb (fun cursor ->
+               let _ = Lmdb.Cursor.seek cursor Int64.(!serial - of_int 30) in
                Lmdb.Cursor.fold_left
                  ~cursor
-                 ~f:(fun _ _ _ -> 0L)
-                   (* initial ^ Int64.to_string key ^ ": " ^ value ^ "\n")*)
-                 0L
+                 ~f:(fun acc _ op -> List.cons (Operation.to_json op) acc)
+                 []
                  logdb)
            in
-           (*Printf.printf "%s" (Int64.to_string data);*)
-           Dream.respond "nada")
+           Dream.respond (`List ops |> Yojson.to_string))
        ]
 ;;
