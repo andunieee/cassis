@@ -1,5 +1,6 @@
 open Core
 open Cassis
+open Stdint
 
 let logdb, _ =
   let open Lmdb in
@@ -33,6 +34,8 @@ let sec =
 
 let pub = Bip340.public_key sec
 let state = ref (State.init ())
+let recently_accepted = ref (Array.create ~len:0 Operation.Unknown)
+let seconds_threshold = Uint32.of_int 30
 
 let () =
   Printf.printf "registry pubkey: %s\n%!" (Hex.of_bytes pub |> Hex.show);
@@ -42,18 +45,53 @@ let () =
        ; Dream.post "/append" (fun req ->
            let%lwt body = Dream.body req in
            let op = Operation.of_json_string body in
+           (* lock mutex, only one operation in flight at each point *)
            State.lock ();
-           let valid, apply_steps = State.prepare !state op in
-           if not valid
+           (* check if this wasn't already sent here in the past past_seconds*2 seconds *)
+           let dupe =
+             Array.find !recently_accepted ~f:(Operation.equal op) |> Option.is_some
+           in
+           if dupe
            then (
              State.unlock ();
              Dream.respond ~code:400 "{\"status\":\"failed\"}")
            else (
-             List.iter apply_steps ~f:(fun apply -> apply state);
-             Lmdb.Map.set logdb !serial op;
-             serial := Int64.( + ) !serial 1L;
-             State.unlock ();
-             Dream.respond "{\"status\":\"ok\"}"))
+             (* check if this is not too old and not too in the future *)
+             let timely =
+               let ts = Operation.ts op in
+               let now = Core_unix.time () |> Float.to_int64 |> Uint32.of_int64 in
+               Poly.(
+                 Uint32.(ts - seconds_threshold) < now
+                 && Uint32.(ts + seconds_threshold) > now)
+             in
+             if not timely
+             then (
+               State.unlock ();
+               Dream.respond ~code:400 "{\"status\":\"failed\"}")
+             else (
+               (* check validity of operation and prepare operations to be applied *)
+               let valid, apply_steps = State.prepare !state op in
+               if not valid
+               then (
+                 State.unlock ();
+                 Dream.respond ~code:400 "{\"status\":\"failed\"}")
+               else (
+                 (* if all is ok, apply operations in memory *)
+                 List.iter apply_steps ~f:(fun apply -> apply state);
+                 (* then save on database *)
+                 Lmdb.Map.set logdb !serial op;
+                 serial := Int64.( + ) !serial 1L;
+                 (* store this here for a while to prevent double-runs *)
+                 let now = Core_unix.time () |> Float.to_int64 |> Uint32.of_int64 in
+                 recently_accepted
+                 := Array.append
+                      (!recently_accepted
+                       |> Array.filter ~f:(fun op ->
+                         Poly.(Operation.ts op > Uint32.(now - seconds_threshold))))
+                      (Array.create ~len:1 op);
+                 (* unlock mutex *)
+                 State.unlock ();
+                 Dream.respond "{\"status\":\"ok\"}"))))
        ; Dream.get "/op/:id" (fun req ->
            let id = Dream.param req "id" |> Int64.of_string in
            let data = Lmdb.Map.get logdb id in

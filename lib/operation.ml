@@ -248,3 +248,21 @@ let to_json op =
 ;;
 
 let to_json_string op = to_json op |> Yojson.to_string
+
+let ts v =
+  match v with
+  | Trust t -> t.ts
+  | Transfer x -> x.ts
+  | Unknown -> Uint32.zero
+;;
+
+let equal v1 v2 =
+  match v1, v2 with
+  | Trust t1, Trust t2 -> t1.source == t2.source && t1.ts == t2.ts
+  | Transfer x1, Transfer x2 ->
+    Array.length x1.signatures == Array.length x2.signatures
+    && Array.length x1.signatures > 0
+    && x1.signatures.(0).signer == x2.signatures.(0).signer
+    && x1.ts == x2.ts
+  | _, _ -> false
+;;
