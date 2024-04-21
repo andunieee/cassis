@@ -4,7 +4,8 @@ exception Invalid_operation_json
 
 module Trust = struct
   type t =
-    { source : uint32
+    { ts : uint32
+    ; source : uint32
     ; target : bytes
     ; amount : uint32
     ; signature : bytes
@@ -15,26 +16,29 @@ module Trust = struct
   let serialise alloc v =
     let baf = alloc (1 + 4 + 32 + 4 + 64) in
     Bigstringaf.unsafe_set baf 0 tag;
-    Bigstringaf.unsafe_set_int32_le baf 1 (Int32.of_uint32 v.source);
-    Bigstringaf.unsafe_blit_from_bytes v.target ~src_off:0 baf ~dst_off:5 ~len:32;
-    Bigstringaf.unsafe_set_int32_le baf 37 (Int32.of_uint32 v.amount);
-    Bigstringaf.unsafe_blit_from_bytes v.signature ~src_off:0 baf ~dst_off:38 ~len:64;
+    Bigstringaf.unsafe_set_int32_le baf 1 (Int32.of_uint32 v.ts);
+    Bigstringaf.unsafe_set_int32_le baf 5 (Int32.of_uint32 v.source);
+    Bigstringaf.unsafe_blit_from_bytes v.target ~src_off:0 baf ~dst_off:9 ~len:32;
+    Bigstringaf.unsafe_set_int32_le baf 41 (Int32.of_uint32 v.amount);
+    Bigstringaf.unsafe_blit_from_bytes v.signature ~src_off:0 baf ~dst_off:45 ~len:64;
     baf
   ;;
 
   let deserialise baf =
     let signature = Bytes.create 64 in
     let target = Bytes.create 32 in
-    let source = Bigstringaf.unsafe_get_int32_le baf 1 |> Uint32.of_int32 in
-    Bigstringaf.unsafe_blit_to_bytes baf ~src_off:5 target ~dst_off:0 ~len:32;
-    let amount = Bigstringaf.unsafe_get_int32_le baf 37 |> Uint32.of_int32 in
-    Bigstringaf.unsafe_blit_to_bytes baf ~src_off:38 signature ~dst_off:0 ~len:64;
-    { source; target; amount; signature }
+    let ts = Bigstringaf.unsafe_get_int32_le baf 1 |> Uint32.of_int32 in
+    let source = Bigstringaf.unsafe_get_int32_le baf 5 |> Uint32.of_int32 in
+    Bigstringaf.unsafe_blit_to_bytes baf ~src_off:9 target ~dst_off:0 ~len:32;
+    let amount = Bigstringaf.unsafe_get_int32_le baf 41 |> Uint32.of_int32 in
+    Bigstringaf.unsafe_blit_to_bytes baf ~src_off:45 signature ~dst_off:0 ~len:64;
+    { ts; source; target; amount; signature }
   ;;
 
   let of_json json =
     let open Yojson.Basic.Util in
-    { source = json |> member "source" |> to_int |> Uint32.of_int
+    { ts = json |> member "ts" |> to_int |> Uint32.of_int
+    ; source = json |> member "source" |> to_int |> Uint32.of_int
     ; target = json |> member "target" |> to_string |> Util.bytes_of_hex
     ; amount = json |> member "amount" |> to_int |> Uint32.of_int
     ; signature = json |> member "signature" |> to_string |> Util.bytes_of_hex
@@ -44,6 +48,7 @@ module Trust = struct
   let to_json v =
     `Assoc
       [ "tag", `String (tag |> Char.escaped)
+      ; "ts", `Int (v.ts |> Uint32.to_int)
       ; "source", `Int (v.source |> Uint32.to_int)
       ; "target", `String (v.target |> Hex.of_bytes |> Hex.show)
       ; "amount", `Int (v.amount |> Uint32.to_int)
@@ -132,7 +137,8 @@ end
 
 module Transfer = struct
   type t =
-    { hops : Hop.t array
+    { ts : uint32
+    ; hops : Hop.t array
     ; signatures : Signature.t array
     }
 
@@ -145,13 +151,14 @@ module Transfer = struct
     Bigstringaf.unsafe_set baf 0 tag;
     Bigstringaf.unsafe_set baf 1 (char_of_int nhops);
     Bigstringaf.unsafe_set baf 2 (char_of_int nsigs);
+    Bigstringaf.unsafe_set_int32_le baf 3 (Int32.of_uint32 v.ts);
     Array.iteri
-      (fun i hop -> hop |> Hop.serialise baf ~offset:(3 + (i * Hop.size)))
+      (fun i hop -> hop |> Hop.serialise baf ~offset:(8 + (i * Hop.size)))
       v.hops;
     Array.iteri
       (fun i sig_ ->
         sig_
-        |> Signature.serialise baf ~offset:(3 + (nhops * Hop.size) + (i * Signature.size)))
+        |> Signature.serialise baf ~offset:(8 + (nhops * Hop.size) + (i * Signature.size)))
       v.signatures;
     baf
   ;;
@@ -159,19 +166,21 @@ module Transfer = struct
   let deserialise baf =
     let nhops = Bigstringaf.unsafe_get baf 1 |> int_of_char in
     let nsigs = Bigstringaf.unsafe_get baf 2 |> int_of_char in
+    let ts = Bigstringaf.unsafe_get_int32_le baf 3 |> Uint32.of_int32 in
     let hops =
-      Array.init nhops (fun i -> Hop.deserialise baf ~offset:(3 + (i * Hop.size)))
+      Array.init nhops (fun i -> Hop.deserialise baf ~offset:(8 + (i * Hop.size)))
     in
     let signatures =
       Array.init nsigs (fun i ->
-        Signature.deserialise baf ~offset:(3 + (nhops * Hop.size) + (i * Signature.size)))
+        Signature.deserialise baf ~offset:(8 + (nhops * Hop.size) + (i * Signature.size)))
     in
-    { hops; signatures }
+    { ts; hops; signatures }
   ;;
 
   let of_json json =
     let open Yojson.Basic.Util in
-    { hops = json |> member "hops" |> to_list |> List.map Hop.of_json |> Array.of_list
+    { ts = json |> member "ts" |> to_int |> Uint32.of_int
+    ; hops = json |> member "hops" |> to_list |> List.map Hop.of_json |> Array.of_list
     ; signatures =
         json
         |> member "signatures"
@@ -184,6 +193,7 @@ module Transfer = struct
   let to_json v =
     `Assoc
       [ "tag", `String (tag |> Char.escaped)
+      ; "ts", `Int (v.ts |> Uint32.to_int)
       ; "hops", `List (v.hops |> Array.map Hop.to_json |> Array.to_list)
       ; "signatures", `List (v.signatures |> Array.map Signature.to_json |> Array.to_list)
       ]
