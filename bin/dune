@@ -1,4 +1,4 @@
 (executables
- (names registry router)
- (libraries cassis dream core core_unix lmdb hex bip340)
+ (names registry router cli)
+ (libraries cassis dream core core_unix lmdb hex bip340 cmdliner)
  (preprocess (pps lwt_ppx)))
