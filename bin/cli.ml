@@ -1,4 +1,6 @@
 open Core
+open Cassis
+open Cassis.Util
 open Stdint
 open Cmdliner
 
@@ -22,39 +24,69 @@ let uint32 =
 
 let hex =
   ( parse_with
-      (fun s -> `Hex s |> Hex.to_bytes)
+      bytes_of_hex
       "must be a hex string"
       (fun v -> Bytes.length v = 32)
       "must be 32 bytes"
-  , fun fmt v -> v |> Hex.of_bytes |> Hex.show |> Format.pp_print_string fmt )
+  , fun fmt v -> v |> hex_of_bytes |> Format.pp_print_string fmt )
 ;;
 
 (* trust command *)
 let trust =
-  let run target amount =
-    match target, amount with
-    | Some target, Some amount ->
-      Printf.printf
-        "trusting %s with %s"
-        (target |> Hex.of_bytes |> Hex.show)
-        (amount |> Uint32.to_string)
-    | _, _ -> ()
+  let get_sec =
+    Arg.(
+      required
+      & opt (some hex) None
+      & info [ "key" ] ~docv:"SECKEY" ~doc:"secret key of the caller, as hex")
+  in
+  let get_source =
+    Arg.(
+      required
+      & opt (some uint32) None
+      & info [ "source" ] ~docv:"SOURCE" ~doc:"serial number of the caller")
   in
   let get_target =
     Arg.(
-      value
+      required
       & opt (some hex) None
       & info [ "target" ] ~docv:"PUBKEY" ~doc:"pubkey to trust, as hex")
   in
   let get_amount =
     Arg.(
-      value
+      required
       & opt (some uint32) None
       & info [ "amount" ] ~docv:"SATOSHIS" ~doc:"amount with which to trust PUBKEY")
   in
+  let run key_hex source target amount =
+    Printf.printf
+      "trusting %s with %s\n%!"
+      (target |> hex_of_bytes)
+      (amount |> Uint32.to_string);
+    let sec = Bip340.load_secret key_hex in
+    let trust : Operation.Trust.t =
+      { ts = Core_unix.time () |> Float.to_int64 |> Uint32.of_int64
+      ; source
+      ; amount
+      ; target
+      ; signature = Bytes.create 64
+      }
+    in
+    let ser_nosig = Operation.Trust.serialise_nosig trust |> Bytes.to_string in
+    trust.signature <- Bip340.sign ~keypair:sec ser_nosig;
+    let resp =
+      Ezcurl.post
+        ~url:"http://localhost:3000/append"
+        ~content:(`String (trust |> Operation.Trust.to_json |> Yojson.to_string))
+        ~params:[]
+        ()
+    in
+    match resp with
+    | Ok c -> Printf.printf "resp: %s" c.body
+    | Error (_, s) -> Printf.printf "error: %s" s
+  in
   Cmd.v
     Cmd.(info ~doc:"declare trust in some other pubkey" "trust")
-    Term.(const run $ get_target $ get_amount)
+    Term.(const run $ get_sec $ get_source $ get_target $ get_amount)
 ;;
 
 (* transfer command *)

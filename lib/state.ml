@@ -89,10 +89,8 @@ let _mutex = Error_checking_mutex.create ()
 let lock _ = Error_checking_mutex.lock _mutex
 let unlock _ = Error_checking_mutex.unlock _mutex
 
-let init _ : t =
-  { pubkeys = Array.create ~len:0 (Bytes.create 0)
-  ; lines = Hashtbl.create (module Int64)
-  }
+let init pubkey : t =
+  { pubkeys = Array.create ~len:1 pubkey; lines = Hashtbl.create (module Int64) }
 ;;
 
 let prepare (state : t) (op : Operation.t) : bool * (t ref -> unit) list =
@@ -100,48 +98,46 @@ let prepare (state : t) (op : Operation.t) : bool * (t ref -> unit) list =
   | Unknown -> false, []
   | Trust t ->
     let source = Uint32.to_int t.source in
-    let sourceKey = Array.get state.pubkeys source in
-    (* get serial number for pubkey *)
-    let target =
-      match Array.findi ~f:(fun _ v -> Bytes.equal v t.target) state.pubkeys with
-      | Some (i, _) -> i
-      | None -> Array.length state.pubkeys
-    in
-    let left, right = if source < target then source, target else target, source in
-    (* key with which to fetch the stored line *)
-    let key = Line.key_of_serials (Uint32.of_int target) t.source in
-    (* signature validation *)
-    let ser = Operation.Trust.serialise Bigstringaf.create t in
-    let without_sig = Bytes.create 38 in
-    let just_sig = Bytes.create 64 in
-    Bigstringaf.unsafe_blit_to_bytes ser ~src_off:0 without_sig ~dst_off:0 ~len:38;
-    Bigstringaf.unsafe_blit_to_bytes ser ~src_off:38 just_sig ~dst_off:0 ~len:32;
-    let without_sig_str = Bytes.to_string without_sig in
-    let valid = Bip340.verify ~pubkey:sourceKey without_sig_str just_sig in
-    (* return if it is valid and steps to apply (i.e. add the new trust or modify an existing one) *)
-    ( valid
-    , [ (fun state_ref ->
-          let state = !state_ref in
-          Hashtbl.update state.lines key ~f:(fun currp ->
-            match currp with
-            | None ->
-              (* new line created *)
-              { peers = Uint32.of_int left, Uint32.of_int right
-              ; balance = false, Uint32.zero
-              ; trust =
-                  (if source < target
-                   then Uint32.zero, t.amount
-                   else t.amount, Uint32.zero)
-              }
-            | Some curr ->
-              (* updated line *)
-              { curr with
-                trust =
-                  (if source < target
-                   then fst curr.trust, t.amount
-                   else t.amount, snd curr.trust)
-              }))
-      ] )
+    let keyExists = Array.length state.pubkeys > source in
+    if not keyExists
+    then false, []
+    else (
+      let sourceKey = Array.unsafe_get state.pubkeys source in
+      (* get serial number for pubkey *)
+      let target =
+        match Array.findi ~f:(fun _ v -> Bytes.equal v t.target) state.pubkeys with
+        | Some (i, _) -> i
+        | None -> Array.length state.pubkeys
+      in
+      let left, right = if source < target then source, target else target, source in
+      (* key with which to fetch the stored line *)
+      let key = Line.key_of_serials (Uint32.of_int target) t.source in
+      (* signature validation *)
+      let valid = Operation.Trust.verify_signature ~pubkey:sourceKey t in
+      (* return if it is valid and steps to apply (i.e. add the new trust or modify an existing one) *)
+      ( valid
+      , [ (fun state_ref ->
+            let state = !state_ref in
+            Hashtbl.update state.lines key ~f:(fun currp ->
+              match currp with
+              | None ->
+                (* new line created *)
+                { peers = Uint32.of_int left, Uint32.of_int right
+                ; balance = false, Uint32.zero
+                ; trust =
+                    (if source < target
+                     then Uint32.zero, t.amount
+                     else t.amount, Uint32.zero)
+                }
+              | Some curr ->
+                (* updated line *)
+                { curr with
+                  trust =
+                    (if source < target
+                     then fst curr.trust, t.amount
+                     else t.amount, snd curr.trust)
+                }))
+        ] ))
   | Transfer x ->
     (* sanity check: make sure the same line isn't invoked twice *)
     let sane =

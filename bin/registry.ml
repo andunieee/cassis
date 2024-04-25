@@ -6,23 +6,10 @@ let logdb, _ =
   let open Lmdb in
   Core_unix.mkdir_p "db";
   let env = Env.(create Rw ~max_maps:2) "db" in
-  let log =
-    Map.create Nodup ~key:Conv.int64_le ~value:Operation.conv ~name:"operations" env
-  and state = Map.create Nodup ~key:Conv.int64_le ~value:State.Line.conv in
+  let log = Map.create Nodup ~key:Conv.int64_be ~value:Operation.conv ~name:"log" env
+  and state = Map.create Nodup ~key:Conv.int64_be ~value:State.Line.conv ~name:"state" in
   log, state
 ;;
-
-let lastlogkey =
-  let open Lmdb in
-  try
-    Cursor.go Ro logdb (fun cursor ->
-      let key, _ = Cursor.last cursor in
-      key)
-  with
-  | Not_found -> 0L
-;;
-
-let serial = ref lastlogkey
 
 let sec =
   (match Sys.getenv "SECRET_KEY" with
@@ -33,13 +20,27 @@ let sec =
 ;;
 
 let pub = Bip340.public_key sec
-let state = ref (State.init ())
+let state = ref (State.init pub) (* start with the registry pubkey as number 0 *)
+let serial = ref Int64.zero
 let recently_accepted = ref (Array.create ~len:0 Operation.Unknown)
 let seconds_threshold = Uint32.of_int 30
 
 let () =
   Printf.printf "registry pubkey: %s\n%!" (Hex.of_bytes pub |> Hex.show);
-  Dream.run ~interface:"0.0.0.0" ~port:3002
+  (* load all operations from log *)
+  let _ =
+    Lmdb.Cursor.go Ro logdb (fun cursor ->
+      Lmdb.Cursor.fold_left
+        ~cursor
+        ~f:(fun _ key op ->
+          let _, steps = State.prepare !state op in
+          (serial := Int64.(key + one));
+          List.iter steps ~f:(fun apply -> apply state))
+        ()
+        logdb)
+  in
+  (* start server *)
+  Dream.run ~interface:"127.0.0.1" ~port:3000
   @@ Dream.router
        [ Dream.get "/" (fun _ -> Dream.respond {|cassis registry|})
        ; Dream.post "/append" (fun req ->
@@ -79,8 +80,8 @@ let () =
                  (* if all is ok, apply operations in memory *)
                  List.iter apply_steps ~f:(fun apply -> apply state);
                  (* then save on database *)
-                 Lmdb.Map.set logdb !serial op;
-                 serial := Int64.( + ) !serial 1L;
+                 Lmdb.Map.add logdb !serial op;
+                 (serial := Int64.(!serial + 1L));
                  (* store this here for a while to prevent double-runs *)
                  let now = Core_unix.time () |> Float.to_int64 |> Uint32.of_int64 in
                  recently_accepted
@@ -100,7 +101,8 @@ let () =
        ; Dream.get "/log" (fun _ ->
            let ops =
              Lmdb.Cursor.go Ro logdb (fun cursor ->
-               let _ = Lmdb.Cursor.seek cursor Int64.(!serial - of_int 30) in
+               let target = Int64.(!serial - of_int (min (to_int !serial) 30)) in
+               let _ = Lmdb.Cursor.seek cursor target in
                Lmdb.Cursor.fold_left
                  ~cursor
                  ~f:(fun acc _ op -> List.cons (Operation.to_json op) acc)

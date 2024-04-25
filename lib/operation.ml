@@ -1,4 +1,5 @@
 open Stdint
+open Util
 
 exception Invalid_operation_json
 
@@ -8,7 +9,7 @@ module Trust = struct
     ; source : uint32
     ; target : bytes
     ; amount : uint32
-    ; signature : bytes
+    ; mutable signature : bytes
     }
 
   let tag = 't'
@@ -22,6 +23,20 @@ module Trust = struct
     Bigstringaf.unsafe_set_int32_le baf 41 (Int32.of_uint32 v.amount);
     Bigstringaf.unsafe_blit_from_bytes v.signature ~src_off:0 baf ~dst_off:45 ~len:64;
     baf
+  ;;
+
+  let serialise_nosig v =
+    let b = Bytes.create (1 + 4 + 4 + 32 + 4) in
+    Bytes.unsafe_set b 0 tag;
+    Bytes.set_int32_le b 1 (Int32.of_uint32 v.ts);
+    Bytes.set_int32_le b 5 (Int32.of_uint32 v.source);
+    Bytes.blit v.target 0 b 9 32;
+    Bytes.set_int32_le b 41 (Int32.of_uint32 v.amount);
+    b
+  ;;
+
+  let verify_signature ~pubkey v =
+    Bip340.verify ~pubkey (serialise_nosig v |> Bytes.to_string) v.signature
   ;;
 
   let deserialise baf =
@@ -39,9 +54,9 @@ module Trust = struct
     let open Yojson.Basic.Util in
     { ts = json |> member "ts" |> to_int |> Uint32.of_int
     ; source = json |> member "source" |> to_int |> Uint32.of_int
-    ; target = json |> member "target" |> to_string |> Util.bytes_of_hex
+    ; target = json |> member "target" |> to_string |> bytes_of_hex
     ; amount = json |> member "amount" |> to_int |> Uint32.of_int
-    ; signature = json |> member "signature" |> to_string |> Util.bytes_of_hex
+    ; signature = json |> member "signature" |> to_string |> bytes_of_hex
     }
   ;;
 
@@ -50,9 +65,9 @@ module Trust = struct
       [ "tag", `String (tag |> Char.escaped)
       ; "ts", `Int (v.ts |> Uint32.to_int)
       ; "source", `Int (v.source |> Uint32.to_int)
-      ; "target", `String (v.target |> Hex.of_bytes |> Hex.show)
+      ; "target", `String (v.target |> hex_of_bytes)
       ; "amount", `Int (v.amount |> Uint32.to_int)
-      ; "signature", `String (v.signature |> Hex.of_bytes |> Hex.show)
+      ; "signature", `String (v.signature |> hex_of_bytes)
       ]
   ;;
 end
@@ -99,7 +114,7 @@ end
 module Signature = struct
   type t =
     { signer : uint32
-    ; signature : bytes
+    ; mutable signature : bytes
     }
 
   let size = 4 + 64
@@ -123,14 +138,14 @@ module Signature = struct
   let of_json json =
     let open Yojson.Basic.Util in
     { signer = json |> member "signer" |> to_int |> Uint32.of_int
-    ; signature = json |> member "signature" |> to_string |> Util.bytes_of_hex
+    ; signature = json |> member "signature" |> to_string |> bytes_of_hex
     }
   ;;
 
   let to_json v =
     `Assoc
       [ "signer", `Int (v.signer |> Uint32.to_int)
-      ; "signatures", `String (v.signature |> Hex.of_bytes |> Hex.show)
+      ; "signatures", `String (v.signature |> hex_of_bytes)
       ]
   ;;
 end
