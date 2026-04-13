@@ -1,0 +1,173 @@
+use cassis_core::{
+    HopInstruction, Invoice, NetworkAdapter, NetworkId, PaymentResult, PaymentStatus, RouteHop,
+    WatchError,
+};
+use cassis_iroh::IrohClient;
+use cassis_nostr::{build_graph, compute_hop_expiries, fetch_announcements, find_route};
+use futures::future::try_join_all;
+use std::collections::HashMap;
+use std::sync::Arc;
+
+#[derive(thiserror::Error, Debug)]
+pub enum PayError {
+    #[error("route error: {0}")]
+    Route(String),
+    #[error("io error: {0}")]
+    Io(String),
+    #[error("unimplemented")]
+    Unimplemented,
+}
+
+#[derive(thiserror::Error, Debug)]
+pub enum RouteError {
+    #[error("no route found")]
+    NoRoute,
+    #[error("nostr fetch error: {0}")]
+    Fetch(String),
+    #[error("unimplemented")]
+    Unimplemented,
+}
+
+pub struct CassisClient {
+    pub adapters: HashMap<NetworkId, Arc<dyn NetworkAdapter>>,
+    pub nostr_relays: Vec<String>,
+}
+
+impl CassisClient {
+    pub fn new(
+        adapters: HashMap<NetworkId, Arc<dyn NetworkAdapter>>,
+        nostr_relays: Vec<String>,
+    ) -> Self {
+        Self {
+            adapters,
+            nostr_relays,
+        }
+    }
+
+    pub async fn pay(
+        &self,
+        _invoice: Invoice,
+        _sender_network: NetworkId,
+    ) -> Result<PaymentResult, PayError> {
+        let invoice = _invoice;
+        let sender_network = _sender_network;
+
+        let route = self
+            .find_route(
+                invoice.destination_pubkey.clone(),
+                invoice.amount_msat,
+                sender_network.clone(),
+            )
+            .await
+            .map_err(|err| PayError::Route(err.to_string()))?;
+
+        if route.is_empty() {
+            return Err(PayError::Route("empty route".to_string()));
+        }
+
+        let deltas = vec![0u64; route.len()];
+        let expiries = compute_hop_expiries(invoice.expires_at, &deltas);
+
+        let instructions: Vec<(IrohClient, HopInstruction)> = route
+            .iter()
+            .enumerate()
+            .map(|(idx, hop)| {
+                let incoming = NetworkId(hop.incoming.0.clone());
+                let outgoing = NetworkId(hop.outgoing.0.clone());
+                let incoming_deadline = expiries.get(idx).copied().unwrap_or(invoice.expires_at);
+                let outgoing_expiry = expiries
+                    .get(idx + 1)
+                    .copied()
+                    .unwrap_or(invoice.expires_at);
+                let instruction = HopInstruction {
+                    payment_hash: invoice.payment_hash,
+                    amount_msat: invoice.amount_msat,
+                    incoming_network: incoming,
+                    outgoing_network: outgoing,
+                    incoming_deadline,
+                    outgoing_expiry,
+                    recipient: hop.node.node_pubkey.clone(),
+                };
+                let client = IrohClient::new(hop.node.iroh_pubkey.clone());
+                (client, instruction)
+            })
+            .collect();
+
+        let ack_futures = instructions.into_iter().map(|(client, instruction)| async move {
+            client
+                .send_instruction(instruction)
+                .await
+                .map_err(|err| PayError::Io(err.to_string()))
+        });
+        let acks = try_join_all(ack_futures).await?;
+        if acks.iter().any(|ack| !ack.accepted) {
+            return Err(PayError::Route("hop rejected".to_string()));
+        }
+
+        let first_hop = route
+            .first()
+            .ok_or_else(|| PayError::Route("route missing".to_string()))?;
+        let first_outgoing = NetworkId(first_hop.outgoing.0.clone());
+        let adapter = self
+            .adapters
+            .get(&sender_network)
+            .ok_or_else(|| PayError::Route("sender network adapter missing".to_string()))?;
+
+        let outgoing_htlc = adapter
+            .create_outgoing_htlc(
+                invoice.payment_hash,
+                invoice.amount_msat,
+                expiries.get(1).copied().unwrap_or(invoice.expires_at),
+                &first_hop.node.node_pubkey,
+            )
+            .await
+            .map_err(|err| PayError::Io(err.to_string()))?;
+
+        match adapter
+            .watch_preimage(&outgoing_htlc, outgoing_htlc.expiry)
+            .await
+        {
+            Ok(preimage) => Ok(PaymentResult {
+                status: PaymentStatus::Completed,
+                preimage: Some(preimage),
+            }),
+            Err(WatchError::DeadlineExceeded) => {
+                let _ = adapter.refund_outgoing(&outgoing_htlc).await;
+                Ok(PaymentResult {
+                    status: PaymentStatus::Refunded,
+                    preimage: None,
+                })
+            }
+            Err(err) => {
+                let _ = adapter.refund_outgoing(&outgoing_htlc).await;
+                Err(PayError::Io(err.to_string()))
+            }
+        }
+    }
+
+    pub async fn find_route(
+        &self,
+        _destination: String,
+        _amount_msat: u64,
+        _sender_network: NetworkId,
+    ) -> Result<Vec<RouteHop>, RouteError> {
+        let destination = _destination;
+        let amount_msat = _amount_msat;
+        let sender_network = _sender_network;
+        let announcements = fetch_announcements(&self.nostr_relays)
+            .await
+            .map_err(|err| RouteError::Fetch(err.to_string()))?;
+        let graph = build_graph(announcements);
+        let route = find_route(&graph, &destination, amount_msat, &sender_network)
+            .map_err(|_| RouteError::NoRoute)?;
+        let hops = route
+            .into_iter()
+            .map(|(node, incoming, outgoing)| RouteHop {
+                node,
+                incoming,
+                outgoing,
+            })
+            .collect();
+        Ok(hops)
+    }
+}

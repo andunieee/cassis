@@ -1,0 +1,11 @@
+[package]
+name = "cassis-client"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+cassis-core = { path = "../cassis-core" }
+cassis-nostr = { path = "../cassis-nostr" }
+cassis-iroh = { path = "../cassis-iroh" }
+futures = "0.3"
+thiserror = "1.0"

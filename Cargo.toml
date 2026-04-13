@@ -1,0 +1,20 @@
+[workspace]
+members = [
+  "cassis-core",
+  "cassis-nostr",
+  "cassis-iroh",
+  "cassis-onchain",
+  "networks/cassis-cashu",
+  "networks/cassis-fedimint",
+  "networks/cassis-ark",
+  "networks/cassis-rootstock",
+  "networks/cassis-liquid",
+  "cassisd",
+  "cassis-client",
+  "cassis-cli",
+]
+resolver = "2"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"

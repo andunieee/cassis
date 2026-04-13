@@ -1,0 +1,65 @@
+use async_trait::async_trait;
+use cassis_core::{
+    HtlcError, IncomingHtlc, NetworkAdapter, NetworkId, OutgoingHtlc, WatchError,
+};
+
+#[derive(Clone, Debug)]
+pub struct FedimintAdapter {
+    network_id: NetworkId,
+}
+
+impl FedimintAdapter {
+    pub fn new(network_id: NetworkId) -> Self {
+        Self { network_id }
+    }
+}
+
+#[async_trait]
+impl NetworkAdapter for FedimintAdapter {
+    fn network_id(&self) -> NetworkId {
+        self.network_id.clone()
+    }
+
+    async fn watch_incoming_htlc(
+        &self,
+        _payment_hash: [u8; 32],
+        _min_amount_msat: u64,
+        _deadline: u64,
+    ) -> Result<IncomingHtlc, WatchError> {
+        Err(WatchError::Unimplemented)
+    }
+
+    async fn create_outgoing_htlc(
+        &self,
+        _payment_hash: [u8; 32],
+        _amount_msat: u64,
+        _expiry: u64,
+        _recipient: &str,
+    ) -> Result<OutgoingHtlc, HtlcError> {
+        Err(HtlcError::Unimplemented)
+    }
+
+    async fn claim_incoming(
+        &self,
+        _htlc: &IncomingHtlc,
+        _preimage: [u8; 32],
+    ) -> Result<(), HtlcError> {
+        Err(HtlcError::Unimplemented)
+    }
+
+    async fn refund_outgoing(&self, _htlc: &OutgoingHtlc) -> Result<(), HtlcError> {
+        Err(HtlcError::Unimplemented)
+    }
+
+    async fn watch_preimage(
+        &self,
+        _htlc: &OutgoingHtlc,
+        _deadline: u64,
+    ) -> Result<[u8; 32], WatchError> {
+        Err(WatchError::Unimplemented)
+    }
+
+    fn incoming_delta_secs(&self) -> u64 {
+        30
+    }
+}
